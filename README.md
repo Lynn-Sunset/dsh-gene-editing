@@ -52,7 +52,6 @@ https://github.com/Lynn-Sunset/dsh-gene-editing/releases/download/v0.6.3/dsh-gen
 5. 配置会持续用于该会话，直到重新应用或停用。普通会话分叉会继承偏好，但使用独立执行记录。
 - 模型、effort、请求预算、工具授权和重试仍由 Harness 管理。
 
-0.6.3 保留八项常驻偏好，工具续步仅在失败、重复、恢复或声明的内容版本变化时追加相关提示，普通成功不再反复追加指引。具体触发条件、测试与边界见[优化计划和验收](docs/OPTIMIZATION_PLAN.md)。
 
 
 ## 交给 AI 继续实施
