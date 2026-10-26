@@ -1,0 +1,6 @@
+- insert:
+    - id: gene-editing
+      name: dsh-gene-editing
+      config:
+        fixedEffort: high
+        exposeVerifierTool: false

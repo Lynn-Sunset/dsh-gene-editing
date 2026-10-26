@@ -1,0 +1,38 @@
+# Apply after dsh-base and dsh-web-app. Each config is a complete replacement.
+- id: llm-deepseek
+  config:
+    apiKeyEnv: DEEPSEEK_API_KEY
+    reasoningEffort: high
+- id: llm-deepseek-account
+  disabled: true
+- id: llm-retry
+  disabled: true
+- id: session-title-llm
+  disabled: true
+- id: compaction-basic
+  disabled: true
+- id: tool-result-pruner
+  disabled: true
+- id: image-offload
+  disabled: true
+- id: session-log-deepseek
+  disabled: true
+- id: preset-standard
+  disabled: true
+- id: preset-minimal
+  disabled: true
+- id: preset-ptc
+  disabled: true
+- id: preset-cordis
+  disabled: true
+- id: agent-preset-registry
+  config:
+    default: gene-controlled
+- insert:
+    - id: preset-gene-controlled
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: gene-controlled
+        name: Gene controlled experiment
+        description: No delegated agents, model tools, compaction or auxiliary model calls.
+        plugins: []

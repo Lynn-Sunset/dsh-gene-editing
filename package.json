@@ -1,0 +1,73 @@
+{
+  "name": "dsh-gene-editing",
+  "version": "0.6.2",
+  "type": "module",
+  "private": true,
+  "description": "Gene Editing：在 DeepSeek Harness 中调节思考倾向和工具使用偏好的可视化插件。",
+  "engines": {
+    "node": ">=24.9.0",
+    "dsh": "0.2.1-rc.3"
+  },
+  "main": "./lib/index.mjs",
+  "exports": {
+    ".": "./lib/index.mjs",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./controlled.patch.yml": "./controlled.patch.yml"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "controlled.patch.yml",
+    "README.md",
+    "docs",
+    "CHANGELOG.md",
+    "LICENSE",
+    "AGENTS.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-api-remotes"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test test/*.test.mjs",
+    "check": "npm run build && npm test",
+    "prepack": "npm run build",
+    "profile": "node scripts/profile.mjs",
+    "smoke:web": "node scripts/smoke-web.mjs"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/dsh-session": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.3"
+  },
+  "dependencies": {
+    "zod": "4.4.3",
+    "quickjs-emscripten": "0.32.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh": "0.2.1-rc.3",
+    "@deepseek-ai/cordis": "4.0.5",
+    "esbuild": "0.25.12"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Lynn-Sunset/dsh-gene-editing.git"
+  },
+  "homepage": "https://github.com/Lynn-Sunset/dsh-gene-editing#readme",
+  "bugs": {
+    "url": "https://github.com/Lynn-Sunset/dsh-gene-editing/issues"
+  },
+  "license": "MIT"
+}

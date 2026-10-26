@@ -1,0 +1,15 @@
+node_modules/
+lib/
+dist/
+.dsh-home/
+.test-home/
+.web-smoke-home/
+.env
+.env.*
+!.env.example
+*.tgz
+*.log
+*-report.json
+test-output/
+test-profile-config.yml
+.DS_Store
