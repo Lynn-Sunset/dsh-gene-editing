@@ -13,6 +13,7 @@ await cp(resolve(root, 'shared'), resolve(output, 'shared'), { recursive: true }
 await writeFile(resolve(root, 'lib/index.mjs'), (await readFile(resolve(root, 'src/index.mjs'), 'utf8')).replaceAll('../shared/', './shared/'));
 await cp(resolve(root, 'src/request-ledger.mjs'), resolve(root, 'lib/request-ledger.mjs'));
 await cp(resolve(root, 'src/tool-integration.mjs'), resolve(root, 'lib/tool-integration.mjs'));
+await cp(resolve(root, 'src/tool-feedback.mjs'), resolve(root, 'lib/tool-feedback.mjs'));
 const client = await build({ entryPoints: [resolve(root, 'src/client.jsx')], bundle: true, write: false, format: 'cjs', platform: 'browser', external: ['react'], jsx: 'transform', minify: false });
 await writeFile(resolve(root, 'lib/client.js'), `window.__ModuleLoader__.load({id:'dsh-gene-editing',factory:(require)=>{var module={exports:{}};var exports=module.exports;\n${client.outputFiles[0].text}\nreturn module.exports;}});\n`);
 console.log('Built standalone Host, Web Client and shared compatibility assets.');

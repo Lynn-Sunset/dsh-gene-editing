@@ -1,6 +1,6 @@
 {
   "name": "dsh-gene-editing",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "type": "module",
   "private": true,
   "description": "Gene Editing：在 DeepSeek Harness 中调节思考倾向和工具使用偏好的可视化插件。",

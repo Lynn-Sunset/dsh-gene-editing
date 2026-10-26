@@ -139,6 +139,75 @@ function expectCounts(state, expected) {
   for (const [key, value] of Object.entries(expected)) assert.equal(state.counts[key], value, `tool count ${key}: ${JSON.stringify(state.counts)}`);
 }
 
+test('successful ordinary work remains quiet with all Genes high and preserves persistent preferences', async () => {
+  const responses = Array.from({ length: 8 }, (_, i) => callsResponse({ id: `ordinary-${i}`, name: 'fixture_echo', args: { value: `file-${i}` } }));
+  const f = await fixture([...responses, answer()]);
+  try {
+    registerEcho(f); await f.apply(highGenes()); await f.turn();
+    assert.equal(f.calls.length, 9, JSON.stringify(f.errors));
+    for (const request of f.calls) assert.equal(feedbackOf(request).length, 0);
+    assert.match(JSON.stringify(f.calls[0].messages.filter(message => message.role === 'system')), /Behavior preferences:/);
+    const state = summary(await f.get());
+    expectCounts(state, { total: 8, succeeded: 8 }); assert.equal(state.feedback.length, 0);
+  } finally { await f.close(); }
+});
+
+test('identical successful results produce one focus cue without requiring or stopping a call', async () => {
+  const f = await fixture([...Array.from({ length: 4 }, (_, i) => callsResponse({ id: `same-${i}`, name: 'fixture_echo', args: { value: 'same' } })), answer()]);
+  try {
+    let attempts = 0; registerEcho(f, 'fixture_echo', { execute: async () => { attempts++; return 'unchanged'; } });
+    await f.apply(highGenes()); await f.turn();
+    assert.equal(f.calls.length, 5); assert.equal(attempts, 4);
+    assert.equal(feedbackOf(f.calls[1]).length, 0);
+    assert.equal(feedbackOf(f.calls[2]).length, 1);
+    assert.equal(feedbackOf(f.calls[4]).length, 1);
+    const notes = summary(await f.get()).feedback;
+    assert.equal(notes.length, 1); assert.deepEqual(notes[0].genes, ['focus']);
+    assert.equal(notes[0].events[0].kind, 'repeat-result');
+    assert.match(textOf(feedbackOf(f.calls[2])[0]), /intentional polling/);
+  } finally { await f.close(); }
+});
+
+test('failure, repeated failure and recovery get distinct cues; unchanged failure does not repeat a lecture', async () => {
+  const f = await fixture([...Array.from({ length: 5 }, (_, i) => callsResponse({ id: `attempt-${i}`, name: 'fixture_retry', args: { value: 'same' } })), answer()]);
+  try {
+    let attempts = 0;
+    registerEcho(f, 'fixture_retry', { execute: async () => { if (++attempts <= 3) throw new Error('same failure'); return 'recovered'; } });
+    await f.apply(highGenes()); await f.turn();
+    assert.equal(attempts, 5); assert.equal(f.calls.length, 6, JSON.stringify(f.errors));
+    assert.equal(feedbackOf(f.calls[2]).length, 2);
+    assert.equal(feedbackOf(f.calls[3]).length, 2, 'The third identical failure must stay quiet.');
+    const state = summary(await f.get());
+    assert.deepEqual(state.feedback.flatMap(item => item.events.map(event => event.kind)), ['failure', 'repeat-failure', 'recovery', 'repeat-result']);
+    expectCounts(state, { total: 5, failed: 3, succeeded: 2 });
+    const original = state.feedback;
+    await f.reload(); assert.deepEqual(summary(await f.get()).feedback, original);
+  } finally { await f.close(); }
+});
+
+test('declared version changes trigger a version cue; arbitrary changed output stays unknown and quiet', async () => {
+  const f = await fixture([
+    callsResponse({ id: 'declared-1', name: 'ops_result' }, { id: 'untyped-1', name: 'fixture_untyped' }),
+    callsResponse({ id: 'declared-2', name: 'ops_result' }, { id: 'untyped-2', name: 'fixture_untyped' }), answer(),
+  ]);
+  try {
+    for (const name of ['ops_result', 'fixture_untyped']) {
+      let attempt = 0;
+      f.ctx.tools.register(defineTool({ name, description: 'Version fixture.', parameters: {},
+        output: { schema: { type: 'json' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
+        async execute() { return { complete: true, status: 'success', contentHash: (++attempt === 1 ? 'a' : 'b').repeat(64) }; },
+      }));
+    }
+    await f.apply(highGenes()); await f.turn();
+    assert.equal(f.calls.length, 3); assert.equal(feedbackOf(f.calls[1]).length, 0);
+    const state = summary(await f.get());
+    assert.equal(state.feedback.length, 1); assert.equal(state.feedback[0].events[0].kind, 'version-change');
+    assert.equal(state.feedback[0].events[0].callId, 'declared-2');
+    assert.ok(state.observations.every(row => row.business === 'unknown'));
+    assert.equal(state.observations.find(row => row.callId === 'untyped-2').artifactVersion, null);
+  } finally { await f.close(); }
+});
+
 test('ordinary low/high RIG changes feedback while preserving the same failed native result and host request settings', { timeout: 15000 }, async () => {
   const observed = [];
   for (const genes of [lowGenes(), highRigor()]) {
@@ -307,6 +376,7 @@ test('real PTC bridge preserves nested failure facts when its outer program succ
     assert.equal(nestedEvents.length, 2);
     assert.ok(nestedEvents.every(event => event.data.parentCallId === 'ptc-root'));
     assert.equal(f.calls[1].messages.filter(message => message.role === 'tool').length, 1, 'PTC nested events stay log-only.');
+    assert.equal(feedbackOf(f.calls[1]).length, 0, 'A handled nested failure must not become a root failure reminder.');
   } finally { await f.close(); }
 });
 
@@ -419,20 +489,29 @@ test('ordinary auxiliary requests pass through with their native options and wit
   } finally { await f.close(); }
 });
 
-test('each Gene independently contributes its own admitted feedback; combinations share one native continuation', { timeout: 15000 }, async () => {
+test('each Gene contributes at its relevant event; combinations share native continuations', { timeout: 15000 }, async () => {
   const geneNames = Object.keys(lowGenes());
   for (const name of geneNames) {
-    const f = await fixture([callsResponse({ id: `single-${name}`, name: 'fixture_fail', args: { value: 'same evidence' } }), answer()]);
+    const later = ['exploration', 'creativity', 'abstraction', 'focus', 'synthesis'].includes(name);
+    const responses = [callsResponse({ id: `single-${name}`, name: 'fixture_fail', args: { value: 'same evidence' } })];
+    if (later) responses.push(callsResponse({ id: `again-${name}`, name: 'fixture_fail', args: { value: 'same evidence' } }));
+    responses.push(answer());
+    const f = await fixture(responses);
     try {
-      registerEcho(f, 'fixture_fail', { execute: async () => { throw new Error('independent Gene fixture'); } });
+      let attempts = 0;
+      registerEcho(f, 'fixture_fail', { execute: async () => {
+        if (++attempts === 2 && name === 'synthesis') return 'Recovered fixture result';
+        throw new Error('independent Gene fixture');
+      } });
       await f.apply({ ...lowGenes(), [name]: 100 }); await f.turn();
-      assert.equal(f.calls.length, 2, `${name}: ${JSON.stringify(f.errors)}`);
-      const feedback = feedbackOf(f.calls[1]);
+      assert.equal(f.calls.length, responses.length, `${name}: ${JSON.stringify(f.errors)}`);
+      if (later) assert.equal(feedbackOf(f.calls[1]).length, 0, `${name} should wait for its relevant transition`);
+      const feedback = feedbackOf(f.calls.at(-1));
       assert.equal(feedback.length, 1, name);
       assert.deepEqual(feedback[0].source.genes, [name], name);
       assert.match(textOf(feedback[0]), new RegExp(`${name}:`), name);
       assert.deepEqual(summary(await f.get()).feedback[0].genes, [name]);
-      expectCounts(summary(await f.get()), { total: 1, failed: 1 });
+      expectCounts(summary(await f.get()), { total: later ? 2 : 1, failed: later && name !== 'synthesis' ? 2 : 1 });
     } finally { await f.close(); }
   }
   const f = await fixture([callsResponse({ id: 'combined', name: 'fixture_fail', args: { value: 'same evidence' } }), answer()]);
@@ -441,8 +520,8 @@ test('each Gene independently contributes its own admitted feedback; combination
     await f.apply(highGenes()); await f.turn();
     const feedback = feedbackOf(f.calls[1]);
     assert.equal(f.calls.length, 2, JSON.stringify(f.errors)); assert.equal(feedback.length, 1);
-    assert.deepEqual([...feedback[0].source.genes].sort(), geneNames.sort());
-    assert.equal(new Set(feedback[0].source.genes).size, 8);
+    assert.deepEqual([...feedback[0].source.genes].sort(), ['depth', 'rigor', 'skepticism']);
+    assert.equal(new Set(feedback[0].source.genes).size, 3, 'Only the Genes relevant to this first failure should interrupt.');
   } finally { await f.close(); }
 });
 
@@ -540,10 +619,11 @@ test('the native repeat reminder is preserved and suppresses only the duplicate 
     const native = f.calls[2].messages.filter(message => message.source?.kind === 'repeat-tool-reminder');
     assert.equal(native.length, 1); assert.match(textOf(native[0]), /repeating|Repeated/);
     const first = feedbackOf(f.calls[1]).at(-1), last = feedbackOf(f.calls[2]).at(-1);
-    assert.ok(first.source.genes.includes('focus'));
+    assert.ok(!first.source.genes.includes('focus'), 'A first failure is not evidence of a repeated call.');
     assert.ok(!last.source.genes.includes('focus'));
-    assert.ok(last.source.genes.includes('rigor'));
-    assert.equal(last.source.genes.length, 7);
+    assert.ok(last.source.genes.includes('exploration'));
+    assert.equal(last.source.genes.length, 4);
+    assert.equal(last.source.events[0].kind, 'repeat-failure');
     expectCounts(summary(await f.get()), { total: 2, failed: 2 });
   } finally { await nativeReminder?.dispose(); await f.close(); }
 });

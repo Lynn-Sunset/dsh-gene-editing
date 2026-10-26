@@ -3,12 +3,14 @@ import { z } from 'zod';
 import { appendPluginRecord, pluginRecordOf } from '@deepseek-ai/dsh-session';
 import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import { defineTool, ToolArgsError } from '@deepseek-ai/dsh-tools';
+import { selectToolFeedback, formatToolFeedback } from './tool-feedback.mjs';
 
 export const TOOL_KEY = 'geneEditingTools';
 export const INSPECT_TOOL = 'gene_tools_inspect';
 const STATE = 'plugin:gene-editing/state';
 const OUTCOME = 'plugin:gene-editing/tool-outcome';
 const MAX_ROWS = 128;
+const MAX_NOTIFIED = 512;
 const clone = value => structuredClone(value);
 const canonical = value => JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item)
   ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
@@ -20,10 +22,10 @@ const identity = (callId, rootCallId, nested) => JSON.stringify([nested, rootCal
 const blankCounts = () => ({ total: 0, roots: 0, nested: 0, succeeded: 0, failed: 0, cancelled: 0, skipped: 0 });
 function fresh(owner, inherited = 0) {
   return { owner, inherited, runId: null, revision: 0, enabled: false, taskSeq: -1, turn: 0, step: 0,
-    counts: blankCounts(), observations: [], pending: {}, finalMeta: {}, feedback: [], acknowledgedSeq: -1, terminalStep: null, dropped: 0 };
+    counts: blankCounts(), observations: [], pending: {}, finalMeta: {}, feedback: [], notified: [], acknowledgedSeq: -1, terminalStep: null, dropped: 0 };
 }
 function taskReset(state, seq) {
-  return { ...state, taskSeq: seq, observations: [], pending: {}, finalMeta: {}, feedback: [], acknowledgedSeq: seq, terminalStep: null };
+  return { ...state, taskSeq: seq, observations: [], pending: {}, finalMeta: {}, feedback: [], notified: [], acknowledgedSeq: seq, terminalStep: null };
 }
 function started(state, event, nested) {
   const d = event.data, callId = nested ? d.subCallId : d.callId;
@@ -64,7 +66,7 @@ function settled(state, event, nested) {
 
 // Only durable outcomes enter this fold. A body returning successfully is not a final result.
 export const toolProjection = {
-  key: TOOL_KEY, stateVersion: 1, stateSchema: z.json(),
+  key: TOOL_KEY, stateVersion: 2, stateSchema: z.json(),
   init: (header, inheritedEventCount) => fresh(header.id, inheritedEventCount),
   apply(state, event) {
     if (event.seq < state.inherited) return state;
@@ -87,8 +89,11 @@ export const toolProjection = {
       const source = event.data.source;
       if (source?.kind === 'user') return taskReset(state, event.seq);
       if (source?.kind === 'gene-editing-tools' && source.runId === state.runId && source.revision === state.revision && source.taskSeq === state.taskSeq) {
+        const events = Array.isArray(source.events) ? source.events.filter(item => typeof item?.key === 'string' && /^[a-f0-9]{64}$/.test(item.key)) : [];
         return { ...state, acknowledgedSeq: Math.max(state.acknowledgedSeq, source.throughSeq),
-          feedback: [...state.feedback, { seq: event.seq, throughSeq: source.throughSeq, genes: source.genes, kind: 'native-continuation' }].slice(-MAX_ROWS) };
+          notified: [...new Set([...state.notified, ...events.map(item => item.key)])].slice(-MAX_NOTIFIED),
+          feedback: [...state.feedback, { seq: event.seq, throughSeq: source.throughSeq, genes: source.genes,
+            events, kind: 'native-continuation' }].slice(-MAX_ROWS) };
       }
     }
     if (event.type === 'tool/call') return started(state, event, false);
@@ -211,13 +216,15 @@ export function installToolIntegration(ctx, { runOf }) {
     if (!enabled(run) || !s || (s.terminalStep?.turn === turn && s.terminalStep?.step === step - 1)) return decision;
     const rows = s.observations.filter(row => row.seq > s.acknowledgedSeq && row.turn === turn && row.step === step - 1 && row.name !== INSPECT_TOOL);
     if (!rows.length) return decision;
-    const actions = directives(run.genes, rows, decision.messages.some(m => m.source?.kind === 'repeat-tool-reminder'));
-    if (!actions.length) return decision;
+    const items = selectToolFeedback({ genes: run.genes, rows, history: s.observations, notified: s.notified,
+      hasNativeRepeat: decision.messages.some(m => m.source?.kind === 'repeat-tool-reminder') });
+    if (!items.length) return decision;
     const throughSeq = Math.max(...rows.map(row => row.seq));
-    const shown = rows.slice(-12).map(row => `${row.callId} ${row.name}: ${row.status}${row.code ? ` (${row.code})` : ''}; business=${row.business}${row.nested ? `; nested under ${row.rootCallId}` : ''}${row.artifactVersion ? `; artifact=${row.artifactVersion}` : ''}`).join('\n');
-    const text = `Gene execution feedback (${rows.length} new outcomes; ${Math.min(rows.length, 12)} shown). This is provenance, not a verification verdict. Nested failure may have been intentionally handled by the outer program. No automatic retry or extra step is required.\n${shown}\n${actions.map(row => `${row.gene}: ${row.text}`).join('\n')}`;
+    const text = formatToolFeedback(items);
     const feedback = createUserMessage({ source: { kind: 'gene-editing-tools', form: 'notice', summary: 'Gene tool execution feedback',
-      runId: run.runId, revision: run.revision, taskSeq: s.taskSeq, throughSeq, genes: actions.map(row => row.gene) }, content: [{ type: 'text', text }] });
+      runId: run.runId, revision: run.revision, taskSeq: s.taskSeq, throughSeq,
+      genes: [...new Set(items.flatMap(item => item.genes))],
+      events: items.map(({ key, kind, callId, seq }) => ({ key, kind, callId, seq })) }, content: [{ type: 'text', text }] });
     // Acknowledgement happens only when the host durably admits this message.
     return { ...decision, messages: [...decision.messages, feedback] };
   });

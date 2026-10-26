@@ -27,13 +27,18 @@
 
 ## 安装
 
-当前版本：`0.6.2`。已针对 Harness `0.2.1-rc.3`、Cordis `4.0.5` 验证；需要 Node.js `24.9.0+`。其他宿主版本需要重新检查兼容性。
+当前版本：`0.6.3`。已针对 Harness `0.2.1-rc.3`、Cordis `4.0.5` 验证；需要 Node.js `24.9.0+`。其他宿主版本需要重新检查兼容性。
 
-1. 从 [Releases](https://github.com/Lynn-Sunset/dsh-gene-editing/releases) 下载 `dsh-gene-editing-0.6.2.tgz`。
-2. 在你的 Harness 环境安装到目标 profile，例如 `web`：
+在 Harness 的「插件 → 添加插件」中粘贴完整安装包链接，点击安装，完成后按提示重启并刷新页面：
+
+```text
+https://github.com/Lynn-Sunset/dsh-gene-editing/releases/download/v0.6.3/dsh-gene-editing-0.6.3.tgz
+```
+
+也可以从 [Releases](https://github.com/Lynn-Sunset/dsh-gene-editing/releases) 下载 `.tgz`，用 CLI 安装到目标 profile，例如 `web`：
 
    ```sh
-   dsh plugin --profile web add "/完整路径/dsh-gene-editing-0.6.2.tgz"
+   dsh plugin --profile web add "/完整路径/dsh-gene-editing-0.6.3.tgz"
    ```
 
 本项目发布 GitHub 安装包，未发布 npm registry 包；请使用下载的 `.tgz`，不要直接运行 `npm install dsh-gene-editing`。
@@ -45,9 +50,9 @@
 3. 在 Harness 原来的输入框提问；应用 Gene 本身不会发送消息。
 4. 会话空闲时可以再次调整；运行中的请求不会被中途改写。
 5. 配置会持续用于该会话，直到重新应用或停用。普通会话分叉会继承偏好，但使用独立执行记录。
-。
 - 模型、effort、请求预算、工具授权和重试仍由 Harness 管理。
 
+0.6.3 保留八项常驻偏好，工具续步仅在失败、重复、恢复或声明的内容版本变化时追加相关提示，普通成功不再反复追加指引。具体触发条件、测试与边界见[优化计划和验收](docs/OPTIMIZATION_PLAN.md)。
 
 
 ## 交给 AI 继续实施
