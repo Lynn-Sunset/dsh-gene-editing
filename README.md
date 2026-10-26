@@ -1,16 +1,14 @@
+# 声明：本插件仍处于开发、迭代的初期阶段，有任何反馈可通过Issues直接提出
 # Gene Editing
 
-**让你用八个 Gene，调节 DeepSeek 看待问题和展开思考的方式。**
+**用八个 Gene，调节 DeepSeek 看待问题和展开思考的方式。**
 
 这是 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的第三方插件，包含中文面板和原生工具调用集成。每个 Gene 提供「低 / 中 / 高」三档，点击旁边的 `i` 可以查看具体逻辑和实际指令。
 
 ## 我们想实现什么
 
-同一道题，你可能希望模型更直接，也可能希望它多联想、深入机制、重新审视前提，或把零散想法整理成一个整体。Gene Editing 让这些偏好变成可以调节、组合和持续使用的控制项。
+同一条Prompt，你可能希望模型更直接作出回答，也可能希望它多联想、深入机制、重新审视前提，或把零散想法整理成一个整体。Gene Editing 让这些偏好变成可以调节、组合和持续使用的控制项。
 
-**体验上的可辨识变化和人的掌控感，是这个项目的核心。** 两个回答都正确，仍然可能体现不同的思考取向；探索带来的绕路也可能是你想要的。正确率、调用次数和耗时可以辅助分析，但不能替代人的判断。
-
-Gene 表达倾向，模型仍根据问题决定怎么做。不要把它实现成固定的「先探索→再质疑→再总结」流水线，也不要强迫模型交付规定数量的方案、反例或标题。Gene 不修改模型权重，也不读取私人思考内容。
 
 ## 八个 Gene
 
@@ -25,7 +23,7 @@ Gene 表达倾向，模型仍根据问题决定怎么做。不要把它实现成
 | FOC 聚焦 | 把注意力集中到当前意图，减少无关展开 |
 | SYN 整合 | 联系分散的发现，形成连贯的理解和选择 |
 
-这些是设计方向，不是对每次输出的保证。低档是一种偏好，不等于停用；停用需要点击「停用 Gene」。**effort 由 Harness 自己的模型设置控制，不属于 Gene。**
+**effort 由 Harness 自己的模型设置控制，不属于 Gene。**
 
 ## 安装
 
@@ -38,10 +36,6 @@ Gene 表达倾向，模型仍根据问题决定怎么做。不要把它实现成
    dsh plugin --profile web add "/完整路径/dsh-gene-editing-0.6.2.tgz"
    ```
 
-3. 重启目标 Harness 服务并刷新页面，在会话入口打开 **Gene Editing**。
-
-Windows 可以将路径写成 `"C:\Downloads\dsh-gene-editing-0.6.2.tgz"`。如果 `dsh` 不在 PATH，请使用你原来启动 Harness 的 CLI 入口。保留 profile 原有配置，不要用本仓库的 `controlled.patch.yml` 覆盖个人配置。
-
 本项目发布 GitHub 安装包，未发布 npm registry 包；请使用下载的 `.tgz`，不要直接运行 `npm install dsh-gene-editing`。
 
 ## 使用
@@ -51,46 +45,10 @@ Windows 可以将路径写成 `"C:\Downloads\dsh-gene-editing-0.6.2.tgz"`。如�
 3. 在 Harness 原来的输入框提问；应用 Gene 本身不会发送消息。
 4. 会话空闲时可以再次调整；运行中的请求不会被中途改写。
 5. 配置会持续用于该会话，直到重新应用或停用。普通会话分叉会继承偏好，但使用独立执行记录。
-
-先只调整一两个 Gene，比较同一道开放问题的回应，通常更容易理解它们的影响。查看关注点、展开方向、表达取舍和行动选择；无需给每次回答打一个总分。
-
-## 当前实际怎么工作
-
-```text
-三档面板 → 会话 Gene 配置 → 具体语义偏好 → 原生模型请求
-                                       ↓
-原生工具结果 → 执行记录 → 在已有工具续步中加入相关 Gene 提示
-```
-
-- 偏好会变成具体指令，不只把一个分数塞进提示词。
-- `gene_tools_inspect` 能查看当前会话真正可用的工具及执行记录。
-- 工具调用后的提示只加入宿主本来就要继续的步骤，不另外制造模型请求。
+。
 - 模型、effort、请求预算、工具授权和重试仍由 Harness 管理。
 
-**实现还在迭代。** 当前工具反馈对没有声明业务契约的工具只记录 `unknown`，不能自动理解所有「成功/失败」含义。实际对照已确认工具链能运行，也观察到选择和过程差异；这不等于八个 Gene 已经能稳定、独立地塑造思考方式。后续重点是改善这种可塑性和用户体验。[架构与边界](docs/ARCHITECTURE.md)
 
-## 从源码开发
-
-```sh
-git clone https://github.com/Lynn-Sunset/dsh-gene-editing.git
-cd dsh-gene-editing
-npm ci --ignore-scripts
-npm run check
-npm pack
-```
-
-Windows 若 PowerShell 拦截 `npm.ps1`，使用 `npm.cmd`。`check` 会构建并运行自动化测试；测试使用本地 fixture，不消耗 DeepSeek API 额度。`npm pack` 会重新构建并生成可安装的 `.tgz`。
-
-| 需要改什么 | 从这里开始 |
-| --- | --- |
-| 面板、按钮和三档交互 | `src/client.jsx`、`src/gene-levels.js` |
-| Gene 的实际语义偏好 | `shared/public/compact-policy.js` |
-| 中文说明与指令预览 | `src/gene-help.js` |
-| 会话应用、停用、恢复、分叉 | `src/index.mjs` |
-| 工具发现、执行记录、续步提示 | `src/tool-integration.mjs` |
-| 集成回归测试 | `test/` |
-
-`shared/src/v4/verifiers/` 保留显式验证任务的兼容代码，普通面板使用 `preferences` 模式，不会自动启动这些任务。`lib/` 是构建产物，不直接编辑。
 
 ## 交给 AI 继续实施
 
