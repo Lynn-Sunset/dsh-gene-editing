@@ -8,7 +8,7 @@
 
 ## 2. 先把现有版本跑通
 
-1. 确认 Node.js >= 24.9.0，目标宿主为 `@deepseek-ai/dsh@0.2.1-rc.3`。
+1. 确认 Node.js >= 24.9.0，目标宿主为 `@deepseek-ai/dsh@0.2.2-rc.5`。
 2. 执行 `npm ci --ignore-scripts`、`npm run check`。
 3. 执行 `npm pack`，用目标 Harness 的 `plugin add` 安装生成的包。
 4. 检查中文面板、八个三档滑块、说明按钮、应用和停用。

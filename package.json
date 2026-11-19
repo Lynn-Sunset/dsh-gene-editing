@@ -1,12 +1,12 @@
 {
   "name": "dsh-gene-editing",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "type": "module",
   "private": true,
   "description": "Gene Editing：在 DeepSeek Harness 中调节思考倾向和工具使用偏好的可视化插件。",
   "engines": {
     "node": ">=24.9.0",
-    "dsh": "0.2.1-rc.3"
+    "dsh": "0.2.2-rc.5"
   },
   "main": "./lib/index.mjs",
   "exports": {
@@ -47,18 +47,18 @@
     "smoke:web": "node scripts/smoke-web.mjs"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "4.0.5",
-    "@deepseek-ai/dsh-session": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-llm": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-tools": "0.2.1-rc.3"
+    "@deepseek-ai/cordis": "~4.1.0",
+    "@deepseek-ai/dsh-llm": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-session": "0.2.2-rc.5",
+    "@deepseek-ai/dsh-tools": "0.2.2-rc.5"
   },
   "dependencies": {
-    "zod": "4.4.3",
-    "quickjs-emscripten": "0.32.0"
+    "quickjs-emscripten": "0.32.0",
+    "zod": "4.4.3"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh": "0.2.1-rc.3",
-    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/cordis": "~4.1.0",
+    "@deepseek-ai/dsh": "0.2.2-rc.5",
     "esbuild": "0.25.12"
   },
   "repository": {

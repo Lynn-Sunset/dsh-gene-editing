@@ -11,6 +11,7 @@ import AgentLoop from '@deepseek-ai/dsh-agent-loop';
 import Llm, { LlmAdapter, createUserMessage } from '@deepseek-ai/dsh-llm';
 import Prompt from '@deepseek-ai/dsh-system-prompt';
 import Tools from '@deepseek-ai/dsh-tools';
+import * as NativeTools from '@deepseek-ai/dsh-tool-executor-native';
 import Commands from '@deepseek-ai/dsh-commands';
 import * as JsonlPersistence from '@deepseek-ai/dsh-session-persistence-jsonl';
 import * as Gene from '../src/index.mjs';
@@ -33,6 +34,7 @@ async function fixture(stream = () => response()) {
   const ctx = new Context(), fibers = [], handles = new Set(), calls = [], errors = [];
   ctx.on('agent/error', ({ error }) => { errors.push(error.message); });
   for (const plugin of [Sessions, Projections, Agents, Llm, Prompt, Tools, Commands]) fibers.push(await ctx.plugin(plugin));
+  fibers.push(await ctx.plugin(NativeTools));
   fibers.push(await ctx.plugin(JsonlPersistence, { root, compression: 'none' }));
   fibers.push(await ctx.plugin(AgentLoop, { agents: [] }));
   class LocalAdapter extends LlmAdapter {

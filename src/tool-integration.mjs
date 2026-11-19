@@ -144,16 +144,16 @@ function directives(genes, rows, hasNativeRepeat = false) {
     return [{ gene: key, text: descriptions[level - 1] }];
   });
 }
-function visibleCapabilities(ctx, agent) {
-  return ctx.tools.schemas(agent).filter(tool => tool.name !== INSPECT_TOOL).sort((a, b) => a.name.localeCompare(b.name));
+function visibleCapabilities(ctx, scope, toolSet) {
+  return ctx.tools.schemas(scope, toolSet).filter(tool => tool.name !== INSPECT_TOOL).sort((a, b) => a.name.localeCompare(b.name));
 }
 const inspectArgs = z.object({ operation: z.enum(['capabilities', 'outcomes']).default('capabilities'), query: z.string().max(240).default(''),
   offset: z.number().int().min(0).max(100000).default(0), limit: z.number().int().min(1).max(20).default(6),
   includeSchemas: z.boolean().default(false) }).strict();
 
-export function installToolIntegration(ctx, { runOf }) {
-  ctx.sessionProjections.register(toolProjection);
-  const stateOf = agent => ctx.sessionProjections.stateOf(agent.session, TOOL_KEY);
+export async function installToolIntegration(ctx, { runOf }) {
+  const projectionHandle = await ctx.sessionProjections.register(toolProjection);
+  const stateOf = agent => projectionHandle.stateOf(agent.session);
   const getToolState = agent => {
     const run = runOf(agent), s = stateOf(agent);
     return { enabled: enabled(run), runId: run?.runId ?? null, revision: run?.revision ?? 0, taskSeq: s?.taskSeq ?? -1,
@@ -176,7 +176,7 @@ export function installToolIntegration(ctx, { runOf }) {
       const agent = exec.agent, run = agent && runOf(agent);
       if (!enabled(run)) throw new Error('Apply Gene conversation preferences to this session first.');
       const args = validation.data, state = getToolState(agent);
-      const available = visibleCapabilities(ctx, agent), catalogRevision = hash(available);
+      const available = visibleCapabilities(ctx, agent, exec.toolSet), catalogRevision = hash(available);
       if (args.operation === 'outcomes') {
         const rows = state.observations.filter(row => !args.query || row.name.toLowerCase().includes(args.query.toLowerCase()));
         return { ...state, observations: rows.slice(args.offset, args.offset + args.limit), totalRetained: rows.length,
@@ -186,18 +186,18 @@ export function installToolIntegration(ctx, { runOf }) {
       const terms = args.query.toLowerCase().split(/\s+/u).filter(Boolean);
       const matches = available.filter(tool => terms.every(term => `${tool.name} ${tool.description}`.toLowerCase().includes(term)));
       const items = matches.slice(args.offset, args.offset + args.limit).map(tool => ({ name: tool.name, description: tool.description.slice(0, 600),
-        schemaHash: hash(tool.parameters), ...(args.includeSchemas ? { parameters: tool.parameters, output: ctx.tools.get(tool.name, agent)?.output?.schema ?? null } : {}) }));
+        schemaHash: hash(tool.parameters), ...(args.includeSchemas ? { parameters: tool.parameters, output: ctx.tools.get(tool.name, agent, exec.toolSet)?.output?.schema ?? null } : {}) }));
       return { runId: run.runId, revision: run.revision, catalogRevision, totalAvailable: available.length, totalMatches: matches.length,
         nextOffset: args.offset + args.limit < matches.length ? args.offset + args.limit : null, items,
         preferences: directives(run.genes, []).map(row => ({ gene: row.gene, guidance: row.text })),
         semantics: 'Current scoped registry snapshot. All calls still require native policy and permissions. No capability was activated or executed. Follow the host native/PTC presentation. Schema hashes identify contracts, not artifact versions or authority.' };
     },
   }));
-  ctx.systemPrompt.section({ name: 'gene-editing.tools', order: 901, interpolate: false, text({ agent }) {
+  ctx.systemPrompt.section({ name: 'gene-editing.tools', order: 901, interpolate: false, text({ agent, scope, toolSet }) {
     if (!agent) return '';
     const run = runOf(agent);
     if (!enabled(run)) return '';
-    const available = visibleCapabilities(ctx, agent);
+    const available = visibleCapabilities(ctx, scope, toolSet);
     if (!available.length) return '';
     return `Gene tool integration: ${available.length} currently visible capabilities (catalog ${hash(available).slice(0, 12)}). Use native tools only when they help the task; answer directly when appropriate. ${INSPECT_TOOL} can inspect current contracts and execution provenance on demand; it does not activate or execute other tools. Follow native/PTC presentation and permissions. No required stages, checks, branches or output headings.\n${directives(run.genes, []).map(row => `${row.gene}: ${row.text}`).join('\n')}`;
   } });

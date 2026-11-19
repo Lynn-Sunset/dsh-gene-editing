@@ -3,7 +3,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { once } from 'node:events';
 import assert from 'node:assert/strict';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const init = spawn(process.execPath, [resolve(root, 'scripts/profile.mjs'), '--test', '--smoke'], { cwd: root, stdio: 'ignore', windowsHide: true });
 assert.equal((await once(init, 'exit'))[0], 0);
@@ -34,7 +34,8 @@ try {
   assert.equal(bundle.status, 200);
   const source = await bundle.text();
   assert.ok(source.includes('Gene Editing') && source.includes('conversation.session.header.actions'));
-  const report = { checkedAt: new Date().toISOString(), runtime: '@deepseek-ai/dsh@0.2.1-rc.3', coldStart: 'passed', clientManifest: 'passed', clientAsset: 'passed', realModelCalls: 0 };
+  const runtime = JSON.parse(await readFile(resolve(root, 'node_modules/@deepseek-ai/dsh/package.json'), 'utf8'));
+  const report = { checkedAt: new Date().toISOString(), runtime: `${runtime.name}@${runtime.version}`, coldStart: 'passed', clientManifest: 'passed', clientAsset: 'passed', realModelCalls: 0 };
   await writeFile(resolve(root, 'web-smoke-report.json'), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report));
 } finally {

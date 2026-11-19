@@ -65,15 +65,15 @@ function restore(saved) {
   return { ...saved, maxTokens, settings, historicalReadOnly, historicalSnapshot: historicalReadOnly ? clone(saved) : null, policy, budget, evidence, prepared: null, pending: 0 };
 }
 
-export function apply(ctx, config = {}) {
+export async function apply(ctx, config = {}) {
   // Legacy settings are accepted for upgrade compatibility, but never limit a
   // newly created v4 run. Historical records carry their own original budget.
   if (config.maxTokens !== undefined) validateV4TokenBudget(config.maxTokens);
   if (config.manageRequestBudget !== undefined && typeof config.manageRequestBudget !== 'boolean') throw new Error('manageRequestBudget must be boolean.');
   const runs = new Map(), controllers = new Set(), work = new Set();
   let closing = false;
-  ctx.sessionProjections.register(projection);
-  const fold = agent => ctx.sessionProjections.stateOf(agent.session, KEY);
+  const projectionHandle = await ctx.sessionProjections.register(projection);
+  const fold = agent => projectionHandle.stateOf(agent.session);
   function runOf(agent) {
     if (!runs.has(agent.id)) {
       const state = fold(agent), saved = state?.run;
@@ -85,7 +85,7 @@ export function apply(ctx, config = {}) {
         const run = { version: 4, mode: 'preferences', runId: randomUUID(), sessionId: agent.id, taskId: null,
           genes: policy.genes, revision: policy.revision, maxTokens: null, maxCalls: null, enabled: saved.enabled === true,
           phase: saved.enabled === true ? 'ready' : 'stopped', lastHash: null, checkedSeq: state.artifactSeq,
-          requiredCheckIds: [], unchanged: 0, capabilities: { mutableEffort: mutableEffort(agent) }, settings: null, effectiveEffort: null,
+          requiredCheckIds: [], unchanged: 0, capabilities: { mutableEffort: false }, settings: null, effectiveEffort: null,
           historicalReadOnly: false, historicalSnapshot: null, legacyCapRestore: null, progress: null, lastError: null,
           policy, budget: new RequestLedger(), evidence: new EvidenceLedger(), prepared: null, pending: 0 };
         runs.set(agent.id, run);
@@ -109,33 +109,26 @@ export function apply(ctx, config = {}) {
   }
   function persist(agent, run) { appendPluginRecord(agent.session, RECORD, serialize(run)); }
   function hostEffort(agent, strict = true) {
-    const header = agent.session.requestHeader();
-    const pending = ctx.sessionProjections.stateOf(agent.session, 'modelSelection')?.pending;
-    const nativeSelection = pending ?? (header ? null : ctx.get('agentDefaultModel')?.currentSelection());
-    if ((nativeSelection && nativeSelection.reasoningEffort === undefined) || (!pending && header?.adapterDefaults?.reasoningEffort === true)) {
+    const selection = agent.model.current();
+    if (selection && selection.reasoningEffort === undefined) {
       if (!strict) return null;
       throw new Error('The native model selection has no explicit reasoning effort. Choose low, high or max in the Harness model picker before starting Gene control.');
     }
-    const effort = agent.model?.current?.()?.reasoningEffort ?? nativeSelection?.reasoningEffort ?? header?.config?.reasoningEffort ?? agent.options.reasoningEffort;
+    const effort = selection?.reasoningEffort ?? agent.options.reasoningEffort;
     if (!strict && effort === undefined) return null;
     return validateReasoningEffort(effort ?? config.fixedEffort ?? 'high');
   }
-  const mutableEffort = agent => Boolean(agent.model?.select && agent.model?.current);
-  const toolIntegration = installToolIntegration(ctx, { runOf });
+  const toolIntegration = await installToolIntegration(ctx, { runOf });
   function view(agent) {
     const run = runOf(agent);
     const effort = hostEffort(agent, Boolean(run && !preferencesOnly(run)));
     return { available: true, sessionId: agent.id, status: agent.status, tasks: listVerificationTasks(),
-      defaults: presetGenes(), defaultSettings: { reasoningEffort: effort, maxTokens: null }, capabilities: { mutableEffort: mutableEffort(agent), fixedEffort: mutableEffort(agent) ? null : effort },
+      defaults: presetGenes(), defaultSettings: { reasoningEffort: effort, maxTokens: null }, capabilities: { mutableEffort: false, fixedEffort: effort },
       run: run ? serialize(run) : null, toolIntegration: toolIntegration.getToolState(agent) };
   }
   function choosePolicy(agent, genes, revision, reasoningEffort) {
     const policy = compilePolicy(genes, { revision, reasoningEffort: validateReasoningEffort(reasoningEffort), budget: { mode: 'host' } });
-    if (mutableEffort(agent)) {
-      agent.model.select({ ...agent.model.current(), reasoningEffort: policy.effort });
-      return policy;
-    }
-    // Published rc.3 lacks the source snapshot's Model API. Never fake a change.
+    // Explicit verification must match the user's native model selection.
     const fixed = hostEffort(agent);
     if (fixed !== policy.effort) throw new Error(`Harness model settings currently select ${fixed} effort, but this run requested ${policy.effort}. Change effort in the native Harness model picker, then start a new Gene run. Genes never change effort.`);
     return policy;
@@ -166,7 +159,7 @@ export function apply(ctx, config = {}) {
           const run = { version: 4, mode: preferences ? 'preferences' : 'verified', maxTokens: null, runId: randomUUID(), sessionId: agent.id, taskId: task?.id ?? null, genes: policy.genes, revision: policy.revision, settings: preferences ? null : { reasoningEffort: policy.effort },
             legacyCapRestore: clone(legacyCapRestore), progress: null,
             policy, maxCalls: null, enabled: true, phase: 'ready', lastHash: null, checkedSeq: fold(agent)?.artifactSeq ?? -1,
-            requiredCheckIds: [], unchanged: 0, capabilities: { mutableEffort: mutableEffort(agent) }, effectiveEffort: preferences ? null : policy.effort,
+            requiredCheckIds: [], unchanged: 0, capabilities: { mutableEffort: false }, effectiveEffort: preferences ? null : policy.effort,
             budget: new RequestLedger(), evidence: new EvidenceLedger(), prepared: null, pending: 0 };
           runs.set(agent.id, run); persist(agent, run);
           // Reuse the native agent loop. There is no plugin-owned model loop.
@@ -199,7 +192,7 @@ export function apply(ctx, config = {}) {
       return makeV4Directive(run.prepared, { round: run.budget.snapshot().callsUsed, maxRounds: run.version === 4 ? null : 2, verificationTask: getVerificationTask(run.taskId) });
     },
   });
-  // rc.3's documented request waterfall logs the final call configuration.
+  // The request waterfall logs the final call configuration.
   // Only this run's output cap is owned here; route and effort stay native.
   ctx.on('agent/request', async ({ agent, signal }, next) => {
     const resolved = await next();

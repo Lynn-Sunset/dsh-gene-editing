@@ -8,13 +8,15 @@ import AgentLoop from '@deepseek-ai/dsh-agent-loop';
 import Llm, { LlmAdapter, createUserMessage } from '@deepseek-ai/dsh-llm';
 import Prompt from '@deepseek-ai/dsh-system-prompt';
 import Tools, { defineTool } from '@deepseek-ai/dsh-tools';
+import * as NativeTools from '@deepseek-ai/dsh-tool-executor-native';
+import * as PtcTools from '@deepseek-ai/dsh-tool-executor-ptc';
 import Commands from '@deepseek-ai/dsh-commands';
 import { PtcRuntime } from '@deepseek-ai/dsh-ptc-runtime';
 import * as RepeatToolReminder from '@deepseek-ai/dsh-repeat-tool-reminder';
 import * as Gene from '../lib/index.mjs';
 import { presetGenes } from '../lib/shared/public/core.js';
 
-// Real rc.3 services and loop; only the provider and PTC interpreter are local
+// Real Harness services and loop; only the provider and PTC interpreter are local
 // fixtures. No network, provider credentials, child processes, or paid calls.
 const lowGenes = () => Object.fromEntries(Object.keys(presetGenes()).map(key => [key, 0]));
 const highRigor = () => ({ ...lowGenes(), rigor: 100 });
@@ -50,7 +52,7 @@ async function fixture(responses, { mode = 'native', runtimeBehavior } = {}) {
   const ctx = new Context(), fibers = [], handles = [], calls = [], errors = [];
   ctx.on('agent/error', ({ error }) => { errors.push(error.stack || error.message); });
   for (const plugin of [Sessions, Projections, Agents, Llm, Prompt, Commands]) fibers.push(await ctx.plugin(plugin));
-  fibers.push(await ctx.plugin(Tools, { mode }));
+  fibers.push(await ctx.plugin(Tools));
   if (mode === 'ptc') {
     ctx.provide('workingDirectory', {
       defaultDirectory: process.cwd(),
@@ -65,6 +67,7 @@ async function fixture(responses, { mode = 'native', runtimeBehavior } = {}) {
     }
     fibers.push(await ctx.plugin(FakeRuntime));
   }
+  fibers.push(await ctx.plugin(mode === 'ptc' ? PtcTools : NativeTools));
   fibers.push(await ctx.plugin(AgentLoop, { agents: [] }));
   class Fake extends LlmAdapter {
     async resolveModel(provider, model) {
@@ -125,7 +128,7 @@ function registerEcho(f, name = 'fixture_echo', options = {}) {
     async execute(args, exec) { return options.execute ? options.execute(args, exec) : `echo:${args.value}`; },
     ...(options.isConcurrencySafe ? { isConcurrencySafe: options.isConcurrencySafe } : {}),
     ...(options.finalizeContent ? { finalizeContent: options.finalizeContent } : {}),
-  }));
+  }), { when: options.when });
 }
 
 function summary(view) {
@@ -550,11 +553,13 @@ test('inspection reads the current scoped schemas without dispatching discovered
     let executions = 0;
     registerEcho(f, 'fixture_visible', { execute: async () => { executions++; return 'visible'; } });
     registerEcho(f, 'fixture_hidden', { execute: async () => { executions++; return 'hidden'; } });
+    registerEcho(f, 'fixture_inactive', { when: () => false });
     release = f.agent.ctx.tools.restrict({ deny: ['fixture_hidden'] });
     await f.apply(highGenes()); await f.turn('Inspect local capabilities without executing them.');
     assert.equal(f.calls.length, 2, JSON.stringify(f.errors)); assert.equal(executions, 0);
     assert.ok(f.calls[0].tools.some(tool => tool.name === 'gene_tools_inspect'));
     assert.ok(!f.calls[0].tools.some(tool => tool.name === 'fixture_hidden'));
+    assert.ok(!f.calls[0].tools.some(tool => tool.name === 'fixture_inactive'));
     const result = resultOf(f.calls[1], 'inspect-scoped'); assert.equal(result.isError, false);
     const value = JSON.parse(textOf(result));
     assert.equal(value.totalMatches, 1); assert.equal(value.nextOffset, null);

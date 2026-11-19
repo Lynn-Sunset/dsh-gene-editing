@@ -9,6 +9,7 @@ import Llm, { LlmAdapter, createUserMessage, resolveRetryPolicy } from '@deepsee
 import * as NativeRetry from '@deepseek-ai/dsh-llm-retry';
 import Prompt from '@deepseek-ai/dsh-system-prompt';
 import Tools from '@deepseek-ai/dsh-tools';
+import * as NativeTools from '@deepseek-ai/dsh-tool-executor-native';
 import Commands from '@deepseek-ai/dsh-commands';
 import * as Gene from '../lib/index.mjs';
 import { presetGenes } from '../lib/shared/public/core.js';
@@ -19,6 +20,7 @@ async function fixture(responses = [broken, fixed], cap = 20000, reasoningEffort
   const ctx = new Context(), calls = [], fibers = [], errors = [];
   ctx.on('agent/error', ({ error }) => { errors.push(error.stack || error.message); });
   for (const plugin of [Sessions, Projections, Agents, Llm, Prompt, Tools, Commands]) fibers.push(await ctx.plugin(plugin));
+  fibers.push(await ctx.plugin(NativeTools));
   fibers.push(await ctx.plugin(AgentLoop, { agents: [] }));
   class Fake extends LlmAdapter {
     providerRetryPolicy() { return retry?.native ? resolveRetryPolicy({ mode: 'always', backoff: { initialDelayMs: 1, maxDelayMs: 1, jitterRatio: 0 } }) : undefined; }
@@ -211,11 +213,20 @@ test('FOC controls evidence reuse and no-progress stopping independently of tota
   }
 });
 
+async function executeVerifier(f, id, args) {
+  const batch = await f.ctx.tools.execute({
+    calls: [{ type: 'tool-call', id, name: 'gene_verify', arguments: JSON.stringify(args) }],
+    agent: f.agent,
+    signal: new AbortController().signal,
+  });
+  return batch.results[0].result;
+}
+
 test('optional native gene_verify tool uses actual Harness tool dispatch and records public evidence', async () => {
   const f = await fixture();
   try {
     await f.command({ op: 'start', taskId: 'tuple_dedup', genes: { ...presetGenes(), skepticism: 100 }, expectedRevision: 0, submit: false });
-    const result = await f.ctx.tools.execute({ callId: 'fixture-verify', name: 'gene_verify', arguments: { artifact: broken }, agent: f.agent, signal: new AbortController().signal });
+    const result = await executeVerifier(f, 'fixture-verify', { artifact: broken });
     assert.ok(JSON.stringify(result).includes('tuple_dedup.delimiter'));
     assert.equal((await f.get()).run.evidence.entries[0].status, 'failed');
     assert.equal(f.calls.length, 0);
@@ -227,7 +238,7 @@ test('optional verifier enforces its complete argument contract before recording
   try {
     await f.command({ op: 'start', taskId: 'tuple_dedup', expectedRevision: 0, submit: false });
     for (const args of [[], null, 'not an object', {}, { artifact: broken, extra: true }, { artifact: 'x'.repeat(131073) }]) {
-      const result = await f.ctx.tools.execute({ callId: 'bad-verify', name: 'gene_verify', arguments: args, agent: f.agent, signal: new AbortController().signal });
+      const result = await executeVerifier(f, 'bad-verify', args);
       assert.equal(result.isError, true); assert.equal(result.error.info.code, 'INVALID_ARGS');
     }
     assert.equal((await f.get()).run.evidence.entries.length, 0); assert.equal(f.calls.length, 0);
@@ -368,31 +379,26 @@ test('managed run still refuses a bypassed mismatching wire cap before dispatch'
   } finally { await f.close(); }
 });
 
-test('native pending/default effort selection outranks stale header and plugin fixed fallback', async () => {
+test('Gene reads native effort choices including an adapter default', async () => {
   const f = await fixture([fixed]);
   try {
-    const selected = { provider: 'fixture', model: 'fake', reasoningEffort: 'max' };
-    f.ctx.provide('agentDefaultModel', { currentSelection: () => selected });
-    assert.equal((await f.get()).capabilities.fixedEffort, 'max');
-    delete selected.reasoningEffort;
+    const { provider, model } = f.agent.model.current();
+    f.agent.model.select({ provider, model, reasoningEffort: 'max' });
+    assert.equal((await f.get()).defaultSettings.reasoningEffort, 'max');
+    f.agent.model.select({ provider, model });
     const missing = await f.command({ op: 'get' });
     assert.equal(missing.kind, 'success'); assert.equal(JSON.parse(missing.text).defaultSettings.reasoningEffort, null);
     const strictStart = await f.command({ op: 'start', taskId: 'tuple_dedup', expectedRevision: 0, submit: false });
     assert.equal(strictStart.kind, 'error'); assert.match(strictStart.text, /no explicit reasoning effort/);
-    selected.reasoningEffort = 'max';
-    const requestHeader = f.agent.session.requestHeader;
-    f.agent.session.requestHeader = () => ({ config: { reasoningEffort: 'high' }, adapterDefaults: { reasoningEffort: true } });
-    assert.equal((await f.get()).defaultSettings.reasoningEffort, null);
-    f.agent.session.requestHeader = requestHeader;
-    f.ctx.sessionProjections.register({ key: 'modelSelection', stateVersion: 2, stateSchema: (await import('zod')).z.json(), init: () => ({ pending: { provider: 'fixture', model: 'fake', reasoningEffort: 'low' } }), apply: state => state });
-    assert.equal((await f.get()).capabilities.fixedEffort, 'low');
+    f.agent.model.select({ provider, model, reasoningEffort: 'low' });
+    assert.equal((await f.get()).defaultSettings.reasoningEffort, 'low');
     assert.equal(f.calls.length, 0);
   } finally { await f.close(); }
 });
 
-test('invalid configured token cap and budget-management mode fail before activation', () => {
-  for (const maxTokens of [null, 0, 100001, 20000.5, '100000']) assert.throws(() => Gene.apply({}, { maxTokens }), /1024/);
-  assert.throws(() => Gene.apply({}, { manageRequestBudget: 'true' }), /must be boolean/);
+test('invalid configured token cap and budget-management mode fail before activation', async () => {
+  for (const maxTokens of [null, 0, 100001, 20000.5, '100000']) await assert.rejects(Gene.apply({}, { maxTokens }), /1024/);
+  await assert.rejects(Gene.apply({}, { manageRequestBudget: 'true' }), /must be boolean/);
 });
 
 test('three improving verification attempts complete and restore without a plugin request limit', async () => {
@@ -519,7 +525,8 @@ test('preferences survive three normal turns and reload, follow native effort an
     await ordinaryTurn(f, '继续讨论取舍。');
     assert.equal(f.calls.length, 2, JSON.stringify(f.errors));
     // A native model-setting change remains authoritative after activation.
-    const disposeSelection = f.ctx.on('agent/request', async (_payload, next) => ({ ...await next(), reasoningEffort: 'low', maxTokens: 256000 }));
+    f.agent.model.select({ ...f.agent.model.current(), reasoningEffort: 'low' });
+    const disposeSelection = f.ctx.on('agent/request', async (_payload, next) => ({ ...await next(), maxTokens: 256000 }));
     await ordinaryTurn(f, '给我一个简短例子。');
     assert.equal(f.calls.length, 3, JSON.stringify(f.errors));
     assert.equal(f.calls[2].reasoningEffort, 'low'); assert.equal(f.calls[2].maxTokens, 256000);
@@ -575,28 +582,27 @@ test('preferences permit auxiliary model requests without changing their options
 test('provider-default effort permits apply and reload without inventing or changing native effort', async () => {
   const f = await fixture([plainAnswer('默认模式回答')], null, 'high', {});
   try {
-    f.ctx.provide('agentDefaultModel', { currentSelection: () => ({ provider: 'fixture', model: 'fake' }) });
+    f.agent.model.select({ provider: 'fixture', model: 'fake' });
     assert.equal((await f.get()).defaultSettings.reasoningEffort, null);
     const applied = await f.command({ op: 'apply', genes: presetGenes(), expectedRevision: 0 });
     assert.equal(applied.kind, 'success', applied.text);
     assert.equal(f.calls.length, 0);
     assert.equal((await f.get()).run.settings, null);
     assert.equal((await f.get()).run.effectiveEffort, null);
-    // A previously resolved provider default must not masquerade as an explicit
-    // user effort choice when the native request header is replayed.
-    const originalHeader = f.agent.session.requestHeader;
-    f.agent.session.requestHeader = () => ({ config: { reasoningEffort: 'high' }, adapterDefaults: { reasoningEffort: true } });
+    // Persist a real request header with the adapter's resolved default.
+    await ordinaryTurn(f, 'Use the provider default.');
+    assert.equal(f.calls[0].reasoningEffort, 'high');
+    assert.equal(f.agent.session.requestHeader().adapterDefaults.reasoningEffort, true);
     await f.reload();
     assert.equal((await f.get()).defaultSettings.reasoningEffort, null);
     assert.equal((await f.get()).run.settings, null);
     const options = { provider: 'fixture', model: 'fake', maxTokens: 12345, messages: [{ role: 'user', content: [{ type: 'text', text: 'native default fixture' }] }], sessionId: f.agent.id, signal: new AbortController().signal };
     for await (const _ of f.ctx.llm.stream(options)) {}
-    assert.equal(f.calls.length, 1);
+    assert.equal(f.calls.length, 2);
     // The native Llm service resolves this fixture provider's declared default
     // to high. Gene leaves the caller's omitted choice and its own metadata null.
-    assert.equal(options.reasoningEffort, undefined); assert.equal(f.calls[0].reasoningEffort, 'high'); assert.equal(f.calls[0].maxTokens, 12345);
+    assert.equal(options.reasoningEffort, undefined); assert.equal(f.calls[1].reasoningEffort, 'high'); assert.equal(f.calls[1].maxTokens, 12345);
     assert.equal((await f.get()).run.phase, 'ready'); assert.equal((await f.get()).run.budget.callsUsed, 0);
-    f.agent.session.requestHeader = originalHeader;
   } finally { await f.close(); }
 });
 
