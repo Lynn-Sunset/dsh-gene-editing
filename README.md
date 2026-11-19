@@ -29,17 +29,15 @@
 
 当前版本 `0.6.4` 适配 Harness `0.2.2-rc.5`（Cordis `4.1.x`），需要 Node.js `24.9.0+`。Harness `0.2.1-rc.3` 用户可继续使用插件 [v0.6.3](https://github.com/Lynn-Sunset/dsh-gene-editing/releases/tag/v0.6.3)。
 
-在 Harness 的「插件 → 添加插件」中粘贴完整安装包链接，点击安装，完成后按提示重启并刷新页面：
+可以在 [Releases](https://github.com/Lynn-Sunset/dsh-gene-editing/releases) 查找对应版本的 `.tgz`，把下载链接粘贴到 Harness 的「插件 → 添加插件」。安装后按提示重启并刷新页面。
 
-```text
-https://github.com/Lynn-Sunset/dsh-gene-editing/releases/download/v0.6.4/dsh-gene-editing-0.6.4.tgz
+也可以在本仓库目录构建 `0.6.4` 安装包，然后用 CLI 安装到 `web` profile：
+
+```sh
+npm ci --ignore-scripts
+npm pack
+dsh plugin --profile web add "./dsh-gene-editing-0.6.4.tgz"
 ```
-
-也可以从 [Releases](https://github.com/Lynn-Sunset/dsh-gene-editing/releases) 下载 `.tgz`，用 CLI 安装到目标 profile，例如 `web`：
-
-   ```sh
-   dsh plugin --profile web add "/完整路径/dsh-gene-editing-0.6.4.tgz"
-   ```
 
 本项目发布 GitHub 安装包，未发布 npm registry 包；请使用下载的 `.tgz`，不要直接运行 `npm install dsh-gene-editing`。
 
